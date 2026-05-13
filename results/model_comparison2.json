@@ -1,0 +1,126 @@
+{
+  "rte": {
+    "Teacher (BERT-base)": {
+      "accuracy": 0.6823104693140795,
+      "precision": 0.6828587818105967,
+      "recall": 0.6833368189898568,
+      "f1": 0.6822069253233208,
+      "avg_inference_time_ms": 90.74677361382379,
+      "gpu_memory_mb": 1432.923828125,
+      "num_parameters": 109483778,
+      "model_size_mb": 417.64746856689453,
+      "confusion_matrix": [
+        [
+          97,
+          49
+        ],
+        [
+          39,
+          92
+        ]
+      ]
+    },
+    "Student (w/o Distillation)": {
+      "accuracy": 0.5415162454873647,
+      "precision": 0.5435784621831133,
+      "recall": 0.5435009934121091,
+      "f1": 0.5414923427826654,
+      "avg_inference_time_ms": 32.73304303487142,
+      "gpu_memory_mb": 1216.923828125,
+      "num_parameters": 66956546,
+      "model_size_mb": 255.41895294189453,
+      "confusion_matrix": [
+        [
+          74,
+          72
+        ],
+        [
+          55,
+          76
+        ]
+      ]
+    },
+    "Student (Distilled)": {
+      "accuracy": 0.48736462093862815,
+      "precision": 0.4904547858276045,
+      "recall": 0.49056258496287775,
+      "f1": 0.4868228786139234,
+      "avg_inference_time_ms": 33.12330775790744,
+      "gpu_memory_mb": 1216.923828125,
+      "num_parameters": 66956546,
+      "model_size_mb": 255.41895294189453,
+      "confusion_matrix": [
+        [
+          63,
+          83
+        ],
+        [
+          59,
+          72
+        ]
+      ]
+    }
+  },
+  "mrpc": {
+    "Teacher (BERT-base)": {
+      "accuracy": 0.8578431372549019,
+      "precision": 0.8443677816109194,
+      "recall": 0.8189547386846712,
+      "f1": 0.8296426411725747,
+      "avg_inference_time_ms": 67.18614468207726,
+      "gpu_memory_mb": 1433.548828125,
+      "num_parameters": 109483778,
+      "model_size_mb": 417.64746856689453,
+      "confusion_matrix": [
+        [
+          92,
+          37
+        ],
+        [
+          21,
+          258
+        ]
+      ]
+    },
+    "Student (w/o Distillation)": {
+      "accuracy": 0.6446078431372549,
+      "precision": 0.6031782945736435,
+      "recall": 0.6109444027673585,
+      "f1": 0.6051340581886626,
+      "avg_inference_time_ms": 34.61057406205397,
+      "gpu_memory_mb": 1217.548828125,
+      "num_parameters": 66956546,
+      "model_size_mb": 255.41895294189453,
+      "confusion_matrix": [
+        [
+          67,
+          62
+        ],
+        [
+          83,
+          196
+        ]
+      ]
+    },
+    "Student (Distilled)": {
+      "accuracy": 0.678921568627451,
+      "precision": 0.6116538249862411,
+      "recall": 0.5901892139701592,
+      "f1": 0.5935358758888171,
+      "avg_inference_time_ms": 34.01346390063946,
+      "gpu_memory_mb": 1217.548828125,
+      "num_parameters": 66956546,
+      "model_size_mb": 255.41895294189453,
+      "confusion_matrix": [
+        [
+          45,
+          84
+        ],
+        [
+          47,
+          232
+        ]
+      ]
+    }
+  }
+}
