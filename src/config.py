@@ -7,27 +7,27 @@ import torch
 
 class Config:
     # Model settings
-    TEACHER_MODEL = "roberta-base"  # DeBERTa-base-uncased
+    TEACHER_MODEL = "bert-base-uncased" 
     STUDENT_NUM_LAYERS = 6
     STUDENT_HIDDEN_SIZE = 768
     STUDENT_NUM_HEADS = 12
     
     # Training settings
     BATCH_SIZE = 16
-    TEACHER_BATCH_SIZE = 8          # Arttırıldı
-    GRADIENT_ACCUMULATION_STEPS = 2  # Azaltıldı
+    TEACHER_BATCH_SIZE = 8          
+    GRADIENT_ACCUMULATION_STEPS = 2  
     LEARNING_RATE = 1e-5
     STUDENT_LR = 5e-5
     NUM_EPOCHS = 10
-    MAX_SEQ_LENGTH = 128             # 128'den 256'ya çıkarıldı (RTE için önemli)
+    MAX_SEQ_LENGTH = 128             
     
     # Early stopping
-    EARLY_STOPPING_PATIENCE = 10      # 3 epoch iyileşme olmazsa dur
-    EARLY_STOPPING_MIN_DELTA = 0 # Minimum F1 iyileşmesi
+    EARLY_STOPPING_PATIENCE = 10      
+    EARLY_STOPPING_MIN_DELTA = 0 
     
     # Optimizer settings
-    WEIGHT_DECAY = 0.01              # Overfitting'i azaltmak için
-    WARMUP_RATIO = 0.1           # Warmup oranı
+    WEIGHT_DECAY = 0.01              
+    WARMUP_RATIO = 0        
     
     # Distillation settings
     TEMPERATURE = 4.0
