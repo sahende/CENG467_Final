@@ -1,179 +1,172 @@
 """
-CENG 467 - Data Preparation for GLUE Tasks (RTE, MRPC)
-Knowledge Distillation for Task-Specific NLU
+CENG 467 - Data Preparation for GLUE Tasks
+Knowledge Distillation with Domain Adaptation
+
+FIX: Bypass HuggingFace cache for subsampling by reloading fresh each time
 """
 
 import torch
-from datasets import load_dataset
+from datasets import load_dataset, Dataset, DatasetDict
 from transformers import AutoTokenizer
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, random_split, ConcatDataset
 import numpy as np
 from config import Config
 
-# Reproducibility
 torch.manual_seed(Config.SEED)
 np.random.seed(Config.SEED)
 
-class GLUEDataset(Dataset):
-    """Custom Dataset class for GLUE sentence-pair tasks."""
-    
-    def __init__(self, encodings, labels):
-        self.encodings = encodings
-        self.labels = labels
-    
-    def __len__(self):
-        return len(self.labels)
-    
-    def __getitem__(self, idx):
-        item = {
-            'input_ids': self.encodings['input_ids'][idx],
-            'attention_mask': self.encodings['attention_mask'][idx],
-            'token_type_ids': self.encodings['token_type_ids'][idx],
-            'labels': torch.tensor(self.labels[idx], dtype=torch.long)
-        }
-        return item
 
-def download_glue_data(task_name):
+def prepare_single_task(task_name, tokenizer, max_train_samples=None):
     """
-    Downloads a GLUE task dataset using Hugging Face datasets library.
+    Prepare DataLoaders for a single GLUE task.
     
     Args:
-        task_name (str): GLUE task name ('rte' or 'mrpc')
-    
-    Returns:
-        DatasetDict containing train, validation, and test splits
+        max_train_samples: If set, randomly subsample training data to this size
     """
-    print(f"Downloading GLUE dataset: {task_name}...")
+    print(f"  Loading {task_name.upper()}...")
     
-    try:
-        dataset = load_dataset("glue", task_name)
-        print(f"Successfully loaded {task_name} dataset!")
-        print(f"Train samples: {len(dataset['train'])}")
-        print(f"Validation samples: {len(dataset['validation'])}")
-        print(f"Test samples: {len(dataset['test'])}")
-        
-        # Show sample
-        print(f"\nSample from {task_name}:")
-        print(f"Sentence 1: {dataset['train'][0]['sentence1']}")
-        print(f"Sentence 2: {dataset['train'][0]['sentence2']}")
-        print(f"Label: {dataset['train'][0]['label']}")
-        
-        return dataset
-    except Exception as e:
-        print(f"Error downloading {task_name}: {e}")
-        raise
-
-def tokenize_and_format(dataset, tokenizer, task_name):
-    """
-    Tokenizes GLUE sentence-pair data and returns PyTorch DataLoaders.
+    # ================================================================
+    # FIX: Fresh load every time (no cache interference)
+    # ================================================================
+    import datasets
+    datasets.disable_caching()
     
-    Args:
-        dataset: Hugging Face DatasetDict
-        tokenizer: Hugging Face tokenizer
-        task_name (str): GLUE task name
+    dataset = load_dataset("glue", task_name)
+    datasets.enable_caching()
     
-    Returns:
-        Tuple of (train_loader, val_loader, test_loader)
-    """
-    num_labels = 2  # RTE ve MRPC binary classification
+    original_size = len(dataset['train'])
+    print(f"    Original train size: {original_size}")
+    
+    # ================================================================
+    # CONTROLLED SUBSAMPLING
+    # ================================================================
+    if max_train_samples is not None and original_size > max_train_samples:
+        rng = np.random.RandomState(Config.SEED)
+        indices = rng.choice(original_size, max_train_samples, replace=False)
+        dataset['train'] = dataset['train'].select(indices.tolist())
+        print(f"    ⚠ Subsampled: {original_size} → {max_train_samples}")
+    else:
+        print(f"    Using full train: {original_size} samples")
+    
+    is_single_sentence = task_name in ["sst2", "cola"]
     
     def preprocess_function(examples):
-        """Tokenize sentence pairs."""
-        return tokenizer(
-            examples['sentence1'],
-            examples['sentence2'],
-            truncation=True,
-            padding='max_length',
-            max_length=Config.MAX_SEQ_LENGTH
-        )
+        if is_single_sentence:
+            return tokenizer(
+                examples['sentence'],
+                truncation=True,
+                padding='max_length',
+                max_length=Config.MAX_SEQ_LENGTH
+            )
+        else:
+            return tokenizer(
+                examples['sentence1'],
+                examples['sentence2'],
+                truncation=True,
+                padding='max_length',
+                max_length=Config.MAX_SEQ_LENGTH
+            )
     
-    print(f"Tokenizing {task_name} dataset...")
-    
-    # Tokenize all splits
-    tokenized_datasets = dataset.map(preprocess_function, batched=True)
-    
-    # Prepare for PyTorch tensors
-    tokenized_datasets = tokenized_datasets.rename_column("label", "labels")
-    tokenized_datasets.set_format(
+    tokenized = dataset.map(preprocess_function, batched=True)
+    tokenized = tokenized.rename_column("label", "labels")
+    tokenized.set_format(
         type="torch",
         columns=["input_ids", "attention_mask", "token_type_ids", "labels"]
     )
     
-    # Create validation split from training data (20%)
-    train_data = tokenized_datasets['train']
+    # Create train/val split
+    train_data = tokenized['train']
     train_size = int((1 - Config.VAL_SPLIT) * len(train_data))
     val_size = len(train_data) - train_size
     
     train_subset, val_subset = random_split(
-        train_data, 
+        train_data,
         [train_size, val_size],
         generator=torch.Generator().manual_seed(Config.SEED)
     )
     
-    # Create DataLoaders
-    train_loader = DataLoader(
-        train_subset,
-        batch_size=Config.BATCH_SIZE,
-        shuffle=True
-    )
-    
-    val_loader = DataLoader(
-        val_subset,
-        batch_size=Config.BATCH_SIZE,
-        shuffle=False
-    )
-    
-    # Test set (GLUE validation set, as labels are not public for test set)
-    test_loader = DataLoader(
-        tokenized_datasets['validation'],
-        batch_size=Config.BATCH_SIZE,
-        shuffle=False
-    )
-    
-    print(f"Train batches: {len(train_loader)}")
-    print(f"Validation batches: {len(val_loader)}")
-    print(f"Test batches: {len(test_loader)}")
-    
-    return train_loader, val_loader, test_loader
+    return {
+        'train': DataLoader(train_subset, batch_size=Config.BATCH_SIZE, shuffle=True),
+        'val': DataLoader(val_subset, batch_size=Config.BATCH_SIZE, shuffle=False),
+        'test': DataLoader(
+            tokenized['validation'],
+            batch_size=Config.BATCH_SIZE,
+            shuffle=False
+        ),
+        'train_dataset': train_subset,
+        'val_dataset': val_subset,
+        'train_size': len(train_subset)
+    }
 
-def prepare_all_tasks():
+
+def prepare_all_tasks(task_list=None, task_subsample_sizes=None):
     """
-    Downloads and prepares all tasks (RTE, MRPC) for the project.
+    Prepare data for given task list.
     
-    Returns:
-        Dictionary containing DataLoaders for each task
+    Args:
+        task_subsample_sizes: Dict mapping task_name → max_train_samples
+                             e.g., {"cola": 3668, "sst2": 5000}
     """
+    if task_list is None:
+        task_list = Config.TASKS
+    
+    if task_subsample_sizes is None:
+        task_subsample_sizes = {}
+    
     tokenizer = AutoTokenizer.from_pretrained(Config.TEACHER_MODEL)
+    print(f"Preparing tasks: {task_list}")
+    if task_subsample_sizes:
+        print(f"  Subsampling config: {task_subsample_sizes}")
     
     task_dataloaders = {}
-    
-    for task in Config.TASKS:
-        print(f"\n{'='*50}")
-        print(f"Preparing {task.upper()} task")
-        print('='*50)
-        
-        # Download
-        dataset = download_glue_data(task)
-        
-        # Tokenize and create loaders
-        train_loader, val_loader, test_loader = tokenize_and_format(
-            dataset, tokenizer, task
-        )
-        
-        task_dataloaders[task] = {
-            'train': train_loader,
-            'val': val_loader,
-            'test': test_loader
-        }
+    for task in task_list:
+        max_samples = task_subsample_sizes.get(task, None)
+        task_dataloaders[task] = prepare_single_task(task, tokenizer, max_train_samples=max_samples)
     
     return task_dataloaders, tokenizer
 
+
+def prepare_combined_tasks(task_list, task_subsample_sizes=None):
+    """Combine multiple tasks into one DataLoader."""
+    if task_subsample_sizes is None:
+        task_subsample_sizes = {}
+    
+    tokenizer = AutoTokenizer.from_pretrained(Config.TEACHER_MODEL)
+    print(f"Preparing COMBINED tasks: {task_list}")
+    
+    task_data = {}
+    for task in task_list:
+        max_samples = task_subsample_sizes.get(task, None)
+        task_data[task] = prepare_single_task(task, tokenizer, max_train_samples=max_samples)
+    
+    train_datasets = [task_data[t]['train_dataset'] for t in task_list]
+    combined_train = ConcatDataset(train_datasets)
+    
+    val_datasets = [task_data[t]['val_dataset'] for t in task_list]
+    combined_val = ConcatDataset(val_datasets)
+    
+    combined_loaders = {
+        'train': DataLoader(combined_train, batch_size=Config.BATCH_SIZE, shuffle=True),
+        'val': DataLoader(combined_val, batch_size=Config.BATCH_SIZE, shuffle=False),
+    }
+    
+    per_task_test = {t: task_data[t]['test'] for t in task_list}
+    
+    print(f"  Combined train: {len(combined_train)}, val: {len(combined_val)}")
+    
+    return combined_loaders, per_task_test, tokenizer
+
+
 if __name__ == "__main__":
-    print("Starting GLUE data preparation...")
-    print(f"Tasks: {Config.TASKS}")
+    print("=" * 60)
+    print("  GLUE Data Preparation (FRESH LOAD)")
+    print("=" * 60)
     
-    task_dataloaders, tokenizer = prepare_all_tasks()
-    
-    print("\n" + "="*50)
-    print("Data preparation complete!")
-    print("="*50)
+    task_dataloaders, _ = prepare_all_tasks(
+        task_list=["rte", "mrpc", "cola", "sst2"],
+        task_subsample_sizes={
+            "cola": 3668,
+            "sst2": 5000,
+        }
+    )
+    print("\n✓ Data preparation complete!")
