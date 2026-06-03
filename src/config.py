@@ -1,6 +1,6 @@
 """
 CENG 467 - Knowledge Distillation for Task-Specific NLU
-Configuration file
+Configuration file - Domain Adaptation Experiments
 """
 
 import torch
@@ -14,27 +14,32 @@ class Config:
     
     # Training settings
     BATCH_SIZE = 16
-    TEACHER_BATCH_SIZE = 8          
-    GRADIENT_ACCUMULATION_STEPS = 2  
-    LEARNING_RATE = 1e-5
-    STUDENT_LR = 5e-5
+    GRADIENT_ACCUMULATION_STEPS = 2        # Effective batch 32
+    LEARNING_RATE = 2e-5                   # Teacher
+    STUDENT_LR = 5e-5                      # Student
     NUM_EPOCHS = 10
-    MAX_SEQ_LENGTH = 128             
+    MAX_SEQ_LENGTH = 128
+    
+    # Domain Adaptation settings
+    GENERAL_EPOCHS = 10
+    ADAPT_EPOCHS = 10
     
     # Early stopping
-    EARLY_STOPPING_PATIENCE = 10      
-    EARLY_STOPPING_MIN_DELTA = 0 
+    EARLY_STOPPING_PATIENCE = 10           
+    EARLY_STOPPING_MIN_DELTA = 0.0         
     
     # Optimizer settings
     WEIGHT_DECAY = 0.01              
-    WARMUP_RATIO = 0        
+    WARMUP_RATIO = 0.0                     
     
     # Distillation settings
     TEMPERATURE = 4.0
     ALPHA = 0.5
     
     # Data settings
-    TASKS = ["rte", "mrpc"]
+    TASKS = [ "rte","mrpc","cola","sst2" ]
+    TARGET_TASKS = [ "mrpc","rte"]
+    GENERAL_TASKS = ["cola","sst2"]
     VAL_SPLIT = 0.2
     
     # Paths
