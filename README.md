@@ -40,10 +40,8 @@ The core research question: *When do intermediate "assistant" models between tea
 src/
 ├── config.py
 ├── prepare_data.py
-├── models.py
 ├── train_baseline.py
 ├── train_distill.py
-├── hierarchical_knowledge_distillation.py
 ├── hierarchical_knowledge_distillation_all.py
 ├── cka_svcca.py
 ├── entropy_analysis.py
