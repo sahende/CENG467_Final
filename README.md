@@ -1,122 +1,145 @@
 # Knowledge Distillation for Task-Specific NLU
 
-**CENG 467 Natural Language Understanding and Generation - Term Project**
+**CENG 467 Natural Language Understanding and Generation - Term Project**  
+*Izmir Institute of Technology, Spring 2026*
 
-İzmir Institute of Technology, Spring 2026
+---
 
 ## Project Overview
 
-This project investigates **knowledge distillation (KD)** for compressing BERT-base (109M parameters) into a compact 6-layer student model (67M parameters) on two GLUE benchmark tasks: RTE (Recognizing Textual Entailment) and MRPC (Microsoft Research Paraphrase Corpus).
+This project investigates **hierarchical knowledge distillation (HKD)** for compressing BERT-base (109M parameters) into a compact 6-layer student model (67M parameters) across four GLUE benchmark tasks: **RTE**, **MRPC**, **CoLA**, and **SST-2**.
+
+The core research question: *When do intermediate "assistant" models between teacher and student actually help?*
+
+---
+
+## Key Contributions
+
+- Systematic depth ablation: 6 assistant depths (1L–10L) × 5 seeds × 4 tasks  
+- Controlled data-scale experiments: CoLA (8.5K, 3.7K, 2.5K), MRPC (3.7K, 2.5K)  
+- Representation analysis: CKA and SVCCA for understanding learned structure  
+- Calibration analysis: Soft entropy, ECE, MCC across all configurations  
+- Practical guidance: HKD helps when data > 3K and teacher-student gap > 0.20  
+
+---
+
+## Key Findings
+
+| Finding | Evidence |
+|--------|----------|
+| HKD benefits are data-gated | U-curve collapses below ~3K samples |
+| HKD benefits are gap-gated | Gains only when gap > 0.20 |
+| Optimal assistant depth: 1–4L | Deeper assistants overfit or collapse |
+| SST-2: HKD fails at all scales | Task too easy (gap < 0.13) |
+| CKA is uniformly high | Representation similarity ≠ performance |
+
+---
 
 ## Repository Structure
 
-```
-├── src/
-│   ├── config.py              # Centralized hyperparameters
-│   ├── prepare_data.py        # Dataset download and preprocessing
-│   ├── models.py              # Model definitions and KD loss function
-│   ├── train_baseline.py      # Teacher and baseline student training
-│   ├── train_distill.py       # Distilled student training
-│   └── evaluate.py            # Model evaluation and comparison
-├── results/                   # JSON results for 8 experiments
-├── models/                    # Saved model checkpoints
-├── requirements.txt           # Python dependencies
-└── README.md                  # This file
-```
+src/
+├── config.py
+├── prepare_data.py
+├── models.py
+├── train_baseline.py
+├── train_distill.py
+├── hierarchical_knowledge_distillation.py
+├── hierarchical_knowledge_distillation_all.py
+├── cka_svcca.py
+├── entropy_analysis.py
+├── evaluate.py
+└── plot.py
+
+results/
+models/
+├── teachers/
+├── all_dataset/
+├── cola/
+└── m2_models/
+
+requirements.txt
+references.bib
+README.md
+
+---
 
 ## Setup
 
 ### Prerequisites
-
 - Python 3.8+
-- CUDA-compatible GPU (recommended, 8GB VRAM minimum)
+- CUDA-compatible GPU (8GB VRAM recommended)
 - Git
 
-### Installation
+---
 
-```bash
+## Installation
+
 git clone https://github.com/sahende/CENG467_Final.git
 cd CENG467_Final
+
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+source venv/bin/activate
+
 pip install -r requirements.txt
-```
 
-## Running the Experiments
+---
 
-### Step 1: Prepare Data
+## Running Experiments
 
-```bash
-python src/prepare_data.py
-```
 
-Downloads RTE and MRPC from GLUE benchmark, tokenizes with `bert-base-uncased`, and splits into train/validation/test sets.
-
-### Step 2: Train Baseline Models
-
-```bash
+Step 1:
 python src/train_baseline.py
-```
 
-Trains the BERT-base teacher (upper bound) and the 6-layer student without distillation (lower bound) across 8 configurations.
-
-### Step 3: Train Distilled Student
-
-```bash
+Step 2:
 python src/train_distill.py
-```
 
-Trains the 6-layer student using knowledge distillation from the frozen teacher across 8 configurations.
+Step 3:
+python src/hierarchical_knowledge_distillation_all.py
 
-### Step 4: Evaluate and Compare
+Step 4:
+python src/cka_svcca.py
 
-```bash
-python src/evaluate.py
-```
+Step 5:
+python src/entropy_analysis.py
 
-Generates comparison tables with Accuracy, Precision, Recall, F1, inference time, and model size.
+Step 6:
+python src/plot.py
+
+---
 
 ## Experimental Design
 
-$2^3$ full factorial design (8 configurations):
+Task: RTE, MRPC, CoLA, SST-2  
+Depth: 1, 2, 4, 6, 8, 10  
+Data: CoLA (8.5K / 3.7K / 2.5K), MRPC (3.7K / 2.5K)  
+Seeds: 42–82  
 
-| Factor | Level 0 | Level 1 |
-|:---|:---|:---|
-| Weight Decay | 0.00 | 0.01 |
-| Sequence Length | 128 | 256 |
-| Early Stopping | Disabled | Enabled (patience=3) |
+---
 
-## Key Results (Best Configuration: wd=0.01, seq=128, no ES)
+## Hyperparameters
 
-| Model | RTE F1 | MRPC F1 | Parameters | Inference |
-|:---|:---:|:---:|:---:|:---:|
-| Teacher (BERT-base) | 0.6686 | 0.8279 | 109M | 72.2 ms |
-| Student (no KD) | 0.5089 | 0.5927 | 67M | 34.7 ms |
-| **Student (Distilled)** | **0.5341** | **0.6242** | **67M** | **35.6 ms** |
+Teacher: BERT-base (12L)  
+Student: 6-layer BERT  
+Temperature: 4.0  
+Alpha: 0.5  
+LR: 5e-5 / 2.5e-5  
+Epochs: 10  
+Batch size: 16  
 
-**Main Finding:** KD improves performance only with $L_2$ regularization ($\lambda=0.01$). Without weight decay, KD degrades RTE F1 by 4.52 points on average.
+---
 
-## Dependencies
+## Citation
 
-All package versions are pinned in `requirements.txt`. Key dependencies:
+@misc{simsek2026hkd,
+  title={Revisiting Hierarchical Knowledge Distillation: Depth Dynamics Across Data Regimes},
+  author={Şimşek, Şahende},
+  year={2026}
+}
 
-- PyTorch >= 2.0.0
-- Transformers >= 4.36.0
-- Datasets >= 2.15.0
-- Scikit-learn >= 1.3.0
-
-## Reproducibility
-
-- All random seeds fixed to 42
-- Hyperparameters centralized in `config.py`
-- Deterministic train/validation split
-- Best model checkpoints saved per epoch
-- No API-based models or external services used
+---
 
 ## Author
 
-**Şahende Şimşek**
-
-İzmir Institute of Technology, Department of Computer Engineering
-
+Şahende Şimşek  
+Izmir Institute of Technology  
 Spring 2026
