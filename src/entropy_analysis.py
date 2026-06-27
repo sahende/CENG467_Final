@@ -2,12 +2,6 @@
 Entropy & Calibration Analysis for Knowledge Distillation
 Compares Teacher vs No Distill vs Direct KD vs HKD Students across ALL depths
 
-FEATURES:
-  ✅ All depths: 1L, 3L, 6L, 10L
-  ✅ All datasets: RTE, MRPC 3.7K, MRPC 2.5K, CoLA 8.5K, CoLA 3.7K, CoLA 2.5K, SST-2 67K
-  ✅ All models: Teacher, No Distill, Direct KD, HKD Students
-  ✅ Metrics: Soft Entropy, ECE, Accuracy, MCC
-  ✅ LaTeX table ready to copy-paste
 """
 
 import torch
@@ -171,112 +165,69 @@ def analyze_models(teacher, models_dict, dataloader, device, task_name):
 # =========================
 # MODEL LOADING HELPERS
 # =========================
-def find_file(paths):
-    """Find first existing file from a list of possible paths."""
-    for p in paths:
-        if os.path.exists(p):
-            return p
-    return None
-
-
-def find_model_path(task_name, model_type, depth, suffix):
-    """
-    Find correct checkpoint for subsampled variants.
-    Searches 4 locations in priority order (same as CKA analysis).
-    """
-    # 1. models/{task}/{task}_{type}_{depth}L{suffix}.pt
-    path1 = f"models/{task_name}/{task_name}_{model_type}_{depth}L{suffix}.pt"
-    if os.path.exists(path1):
-        return path1
-    
-    # 2. models/all_dataset/{task}_{type}_{depth}L{suffix}.pt
-    path2 = f"models/all_dataset/{task_name}_{model_type}_{depth}L{suffix}.pt"
-    if os.path.exists(path2):
-        return path2
-    
-    # 3. models/all_dataset/{task}_{type}_{depth}L.pt (suffix'siz, original)
-    path3 = f"models/all_dataset/{task_name}_{model_type}_{depth}L.pt"
-    if os.path.exists(path3):
-        return path3
-    
-    # 4. models/{task}_{type}_{depth}L{suffix}.pt
-    path4 = f"models/{task_name}_{model_type}_{depth}L{suffix}.pt"
-    if os.path.exists(path4):
-        return path4
-    
-    return None
-
-
-def load_teacher(task_name, suffix, device):
+def load_teacher(task_name, dataset_size_str, device):
     """Load teacher model."""
     teacher = get_teacher_model(task_name, num_labels=2)
-    path = find_file([
-        os.path.join(TEACHERS_DIR, f"teacher_{task_name}{suffix}.pt"),
-        os.path.join(MODELS_DIR, f"teacher_{task_name}.pt"),
-    ])
-    if path:
+    path = Config.get_model_path(task_name, "baselines", "teacher.pt", dataset_size=dataset_size_str)
+    
+    if os.path.exists(path):
         teacher.load_state_dict(torch.load(path, map_location=device))
         teacher.to(device).eval()
         for p in teacher.parameters():
             p.requires_grad = False
         print(f"    ✓ Teacher: {os.path.basename(path)}")
         return teacher
-    print(f"    ✗ Teacher not found (suffix={suffix})")
+    print(f"    ✗ Teacher not found (size={dataset_size_str})")
     return None
 
 
-def load_all_models(task_name, suffix, device):
+def load_all_models(task_name, dataset_size_str, device):
     """
     Load all student models for ALL depths.
-    Uses find_model_path for HKD students (same logic as CKA analysis).
     """
     models = {}
     
-    # HKD Students for all depths (using same path logic as CKA)
+    # HKD Students for all depths
     for depth in ALL_DEPTHS:
-        hkd_path = find_model_path(task_name, "student", depth, suffix)
-        if hkd_path:
+        hkd_path = Config.get_model_path(task_name, "hierarchical_kd", f"student_hkd_depth{depth}L.pt", dataset_size=dataset_size_str)
+        if os.path.exists(hkd_path):
             student = get_student_model(num_labels=2)
             student.load_state_dict(torch.load(hkd_path, map_location=device))
             student.to(device).eval()
             models[f'HKD {depth}L ($\\rightarrow$6L)'] = student
             print(f"    ✓ HKD {depth}L Student: {os.path.basename(hkd_path)}")
         else:
-            print(f"    ✗ HKD {depth}L Student NOT FOUND (task={task_name}, suffix={suffix})")
+            print(f"    ✗ HKD {depth}L Student NOT FOUND (task={task_name}, size={dataset_size_str})")
     
     # No Distill (6L, no KD)
-    no_distill_path = find_file([
-        os.path.join(MODELS_DIR, f"student_no_distill_{task_name}{suffix}.pt"),
-        os.path.join(MODELS_DIR, f"student_no_distill_{task_name}.pt"),
-    ])
-    if no_distill_path:
+    no_distill_path = Config.get_model_path(task_name, "baselines", "student_no_distill.pt", dataset_size=dataset_size_str)
+    if os.path.exists(no_distill_path):
         student = get_student_model(num_labels=2)
         student.load_state_dict(torch.load(no_distill_path, map_location=device))
         student.to(device).eval()
         models['No Distill (6L)'] = student
         print(f"    ✓ No Distill: {os.path.basename(no_distill_path)}")
     else:
-        print(f"    ✗ No Distill NOT FOUND (task={task_name}, suffix={suffix})")
+        print(f"    ✗ No Distill NOT FOUND (task={task_name}, size={dataset_size_str})")
     
     # Direct KD (12L→6L)
-    direct_kd_path = find_file([
-        os.path.join(MODELS_DIR, f"student_kd_{task_name}{suffix}.pt"),
-        os.path.join(MODELS_DIR, f"student_kd_{task_name}.pt"),
-        os.path.join(MODELS_DIR, f"student_distilled_{task_name}.pt"),
-    ])
-    if direct_kd_path:
+    direct_kd_path = Config.get_model_path(task_name, "hierarchical_kd", "direct_kd.pt", dataset_size=dataset_size_str)
+    if not os.path.exists(direct_kd_path):
+        direct_kd_path = Config.get_model_path(task_name, "standard_kd", "student_distilled.pt", dataset_size=dataset_size_str)
+        
+    if os.path.exists(direct_kd_path):
         student = get_student_model(num_labels=2)
         student.load_state_dict(torch.load(direct_kd_path, map_location=device))
         student.to(device).eval()
         models['Direct KD (6L)'] = student
         print(f"    ✓ Direct KD: {os.path.basename(direct_kd_path)}")
     else:
-        print(f"    ✗ Direct KD NOT FOUND (task={task_name}, suffix={suffix})")
+        print(f"    ✗ Direct KD NOT FOUND (task={task_name}, size={dataset_size_str})")
     
     return models
 
 
-def run_config(task_name, variant_label, suffix, task_subsample_sizes, device, all_results):
+def run_config(task_name, variant_label, dataset_size_str, task_subsample_sizes, device, all_results):
     """Run analysis for one configuration."""
     print(f"\n{'─'*60}")
     print(f"  {task_name.upper()} - {variant_label}")
@@ -285,11 +236,11 @@ def run_config(task_name, variant_label, suffix, task_subsample_sizes, device, a
     target_data, _ = prepare_all_tasks([task_name], task_subsample_sizes)
     test_loader = target_data[task_name]['test']
     
-    teacher = load_teacher(task_name, suffix, device)
+    teacher = load_teacher(task_name, dataset_size_str, device)
     if teacher is None:
         return
     
-    models = load_all_models(task_name, suffix, device)
+    models = load_all_models(task_name, dataset_size_str, device)
     if not models:
         print(f"    ✗ No models found")
         return
@@ -325,18 +276,15 @@ def main():
     # ================================================================
     # ALL CONFIGURATIONS
     # ================================================================
-    configs = [
-        ("cola", "8.5K", "_original", {}),
-        ("cola", "3.7K", "_3668", {"cola": 3668}),
-        ("cola", "2.5K", "_2490", {"cola": 2490}),
-        ("mrpc", "3.7K", "_original", {}),
-        ("mrpc", "2.5K", "_2490", {"mrpc": 2490}),
-        ("rte", "2.5K", "_original", {}),
-        ("sst2", "67K", "_original", {}),
-    ]
+    configs = []
+    for task in Config.TASKS:
+        for size in Config.get_task_sizes(task):
+            subsample = Config.size_to_subsample(task, size)
+            label = str(size)
+            configs.append((task, label, str(size), subsample))
     
-    for task, variant, suffix, subsample in configs:
-        run_config(task, variant, suffix, subsample, device, all_results)
+    for task, variant, size_str, subsample in configs:
+        run_config(task, variant, size_str, subsample, device, all_results)
     
     # ================================================================
     # SAVE JSON
@@ -352,56 +300,6 @@ def main():
     output_path = os.path.join(Config.RESULTS_PATH, "entropy_analysis_all_depths.json")
     with open(output_path, 'w') as f:
         json.dump(convert_to_serializable(all_results), f, indent=2)
-    
-    # ================================================================
-    # LATEX TABLE - ALL DEPTHS
-    # ================================================================
-    print(f"\n{'='*90}")
-    print("  LATEX TABLE (Copy-Paste Ready)")
-    print(f"{'='*90}")
-    
-    task_order = [
-        ('cola', '8.5K', 'CoLA 8.5K'),
-        ('cola', '3.7K', 'CoLA 3.7K'),
-        ('cola', '2.5K', 'CoLA 2.5K'),
-        ('mrpc', '3.7K', 'MRPC 3.7K'),
-        ('mrpc', '2.5K', 'MRPC 2.5K'),
-        ('rte', '2.5K', 'RTE 2.5K'),
-        ('sst2', '67K', 'SST-2 67K'),
-    ]
-    
-    hkd_models = [f'HKD {d}L ($\\rightarrow$6L)' for d in ALL_DEPTHS]
-    baseline_models = ['No Distill (6L)', 'Direct KD (6L)']
-    
-    for task, variant, label in task_order:
-        key = f"{task}_{variant}"
-        if key not in all_results:
-            continue
-        
-        r = all_results[key]
-        
-        print(f"\n\\multicolumn{{5}}{{|c|}}{{\\textbf{{{label}}}}} \\\\")
-        print("\\hline")
-        
-        # Teacher
-        t = r['teacher']
-        print(f"Teacher (12L) & {t['mean_softened_entropy']:.3f} & {t['calibration']['ece']:.3f} & {t['accuracy']:.3f} & {t['mcc']:.3f} \\\\")
-        
-        # Baseline models
-        for model_name in baseline_models:
-            s = r['students'].get(model_name)
-            if s:
-                mcc_str = f"{s['mcc']:.3f}" if s.get('mcc') is not None else "N/A"
-                print(f"{model_name} & {s['mean_softened_entropy']:.3f} & {s['calibration']['ece']:.3f} & {s['accuracy']:.3f} & {mcc_str} \\\\")
-        
-        # HKD models
-        for model_name in hkd_models:
-            s = r['students'].get(model_name)
-            if s:
-                mcc_str = f"{s['mcc']:.3f}" if s.get('mcc') is not None else "N/A"
-                print(f"{model_name} & {s['mean_softened_entropy']:.3f} & {s['calibration']['ece']:.3f} & {s['accuracy']:.3f} & {mcc_str} \\\\")
-        
-        print("\\hline")
     
     print(f"\n✓ JSON saved to: {output_path}")
 

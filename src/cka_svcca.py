@@ -2,16 +2,6 @@
 CKA / SVCCA Analysis for Hierarchical Knowledge Distillation
 Analyzes representation similarity across tasks, depths, and data scales.
 
-FIXED:
-  ✅ Standardization REMOVED (Linear CKA is scale-invariant)
-  ✅ PWCCA REMOVED (non-standard implementation)
-  ✅ SVCCA renamed to "SVCCA-inspired"
-  ✅ CKA renamed to "SVD-denoised CKA"
-  ✅ n_components clipping FIXED: max(5, n) → min(max(5, n), len(S))
-  ✅ MRPC 2.5K checkpoint paths FIXED (now uses MRPC-specific checkpoints)
-  ✅ Numerically stable HSIC computation
-  ✅ Teacher path with suffix support
-  ✅ Auto path detection for subsampled variants
 """
 
 import torch
@@ -22,7 +12,7 @@ from tqdm import tqdm
 
 from config import Config
 from models import get_teacher_model, get_student_model
-from hierarchical_knowledge_distillation import get_assistant_model, evaluate
+from hierarchical_knowledge_distillation_all import get_assistant_model, evaluate
 from prepare_data import prepare_all_tasks
 
 
@@ -46,14 +36,14 @@ def compute_cka(X, Y, variance_threshold=0.99):
     Ux, Sx, _ = np.linalg.svd(X, full_matrices=False)
     explained_var_x = np.cumsum(Sx**2) / np.sum(Sx**2)
     n_components_x = np.searchsorted(explained_var_x, variance_threshold) + 1
-    # FIX: Clip safely (min(max(5, n), len(S)))
+    # Clip safely (min(max(5, n), len(S)))
     n_components_x = min(max(5, n_components_x), len(Sx))
     
     # SVD denoising for Y
     Uy, Sy, _ = np.linalg.svd(Y, full_matrices=False)
     explained_var_y = np.cumsum(Sy**2) / np.sum(Sy**2)
     n_components_y = np.searchsorted(explained_var_y, variance_threshold) + 1
-    # FIX: Clip safely (min(max(5, n), len(S)))
+    # Clip safely (min(max(5, n), len(S)))
     n_components_y = min(max(5, n_components_y), len(Sy))
     
     # Use the SAME number of components for both
@@ -169,49 +159,18 @@ def load_model_from_path(model, path, device):
         return model, False
 
 
-# =========================
-# PATH HELPER: Find correct checkpoint for subsampled variants
-# =========================
-def find_model_path(task_name, model_type, depth, suffix):
-    # 1. Task-specific path (for subsampled variants)
-    task_specific = f"models/{task_name}/{task_name}_{model_type}_{depth}L{suffix}.pt"
-    if os.path.exists(task_specific):
-        return task_specific
-    
-    # 2. Shared path WITH suffix (for subsampled variants in all_dataset)
-    shared_with_suffix = f"models/all_dataset/{task_name}_{model_type}_{depth}L{suffix}.pt"
-    if os.path.exists(shared_with_suffix):
-        return shared_with_suffix
-    
-    # 3. Shared path WITHOUT suffix (for original datasets)
-    shared = f"models/all_dataset/{task_name}_{model_type}_{depth}L.pt"
-    if os.path.exists(shared):
-        return shared
-    
-    # 4. Fallback
-    fallback = f"models/{task_name}_{model_type}_{depth}L{suffix}.pt"
-    if os.path.exists(fallback):
-        return fallback
-    
-    return None
-
-
-# =========================
-# SINGLE CONFIG ANALYSIS
-# =========================
 def analyze_config(task_name, config_label, device, 
-                   test_loader, teacher_suffix="_original"):
+                   test_loader, dataset_size_str):
     """
     Analyze one configuration (task + data scale).
-    Automatically finds correct model paths based on suffix.
     """
     print(f"\n{'─'*60}")
     print(f"  {config_label}")
     print(f"{'─'*60}")
     
-    # Teacher with suffix
+    # Teacher
     teacher = get_teacher_model(task_name, num_labels=2)
-    teacher_path = f"models/teachers/teacher_{task_name}{teacher_suffix}.pt"
+    teacher_path = Config.get_model_path(task_name, "baselines", "teacher.pt", dataset_size=dataset_size_str)
     teacher, ok = load_model_from_path(teacher, teacher_path, device)
     if not ok:
         return None
@@ -230,11 +189,11 @@ def analyze_config(task_name, config_label, device,
         print(f"\n  --- Depth {depth}L ---")
         
         # Find correct model paths
-        assistant_path = find_model_path(task_name, "assistant", depth, teacher_suffix)
-        student_path = find_model_path(task_name, "student", depth, teacher_suffix)
+        assistant_path = Config.get_model_path(task_name, "hierarchical_kd", f"assistant_depth{depth}L.pt", dataset_size=dataset_size_str)
+        student_path = Config.get_model_path(task_name, "hierarchical_kd", f"student_hkd_depth{depth}L.pt", dataset_size=dataset_size_str)
         
-        if not assistant_path or not student_path:
-            print(f"    ✗ Models not found (suffix={teacher_suffix})")
+        if not os.path.exists(assistant_path) or not os.path.exists(student_path):
+            print(f"    ✗ Models not found (size={dataset_size_str})")
             continue
         
         # Assistant
@@ -296,18 +255,15 @@ def main():
     # ================================================================
     # ALL CONFIGURATIONS
     # ================================================================
-    configs = [
-        # (task, config_label, task_list, subsample_sizes, teacher_suffix)
-        ("cola", "CoLA 8.5K", ["cola"], {}, "_original"),
-        ("cola", "CoLA 3.7K", ["cola"], {"cola": 3668}, "_3668"),
-        ("cola", "CoLA 2.5K", ["cola"], {"cola": 2490}, "_2490"),
-        ("mrpc", "MRPC 3.7K", ["mrpc"], {}, "_original"),
-        ("mrpc", "MRPC 2.5K", ["mrpc"], {"mrpc": 2490}, "_2490"),
-        ("rte", "RTE 2.5K", ["rte"], {}, "_original"),
-        ("sst2", "SST-2 67K", ["sst2"], {}, "_original"),
-    ]
+    # Auto-generate configs from Config.TARGET_TASKS and DATASET_SIZES
+    configs = []
+    for task in Config.TARGET_TASKS:
+        for size in Config.get_task_sizes(task):
+            subsample = Config.size_to_subsample(task, size)
+            label = f"{task.upper()} [{size}]"
+            configs.append((task, label, [task], subsample, str(size)))
     
-    for task, label, task_list, subsample, suffix in configs:
+    for task, label, task_list, subsample, size_str in configs:
         print(f"\n{'='*70}")
         print(f"  {label}")
         print(f"{'='*70}")
@@ -315,7 +271,7 @@ def main():
         target_data, _ = prepare_all_tasks(task_list, subsample)
         test_loader = target_data[task]['test']
         
-        results = analyze_config(task, label, device, test_loader, teacher_suffix=suffix)
+        results = analyze_config(task, label, device, test_loader, dataset_size_str=size_str)
         if results:
             key = label.lower().replace(" ", "_").replace(".", "")
             all_results[key] = results

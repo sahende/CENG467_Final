@@ -1,5 +1,5 @@
 """
-CENG 467 - Model Evaluation and Comparison
+Model Evaluation and Comparison
 Compares all models: Teacher, Student w/o Distillation, Distilled Student
 """
 
@@ -92,12 +92,12 @@ def evaluate_model(model, dataloader, device):
     
     return metrics
 
-def load_all_models(task, device):
+def load_all_models(task, device, size="full"):
     """Load all saved models for comparison."""
     models = {}
     
     # Teacher
-    teacher_path = os.path.join(Config.MODEL_SAVE_PATH, f"teacher_{task}.pt")
+    teacher_path = Config.get_model_path(task, "baselines", "teacher.pt", dataset_size=size)
     if os.path.exists(teacher_path):
         teacher = get_teacher_model(task)
         teacher.load_state_dict(torch.load(teacher_path, map_location=device))
@@ -106,7 +106,7 @@ def load_all_models(task, device):
         models['Teacher (BERT-base)'] = teacher
     
     # Student w/o distillation
-    student_path = os.path.join(Config.MODEL_SAVE_PATH, f"student_no_distill_{task}.pt")
+    student_path = Config.get_model_path(task, "baselines", "student_no_distill.pt", dataset_size=size)
     if os.path.exists(student_path):
         student = get_student_model()
         student.load_state_dict(torch.load(student_path, map_location=device))
@@ -115,7 +115,7 @@ def load_all_models(task, device):
         models['Student (w/o Distillation)'] = student
     
     # Distilled student
-    distilled_path = os.path.join(Config.MODEL_SAVE_PATH, f"student_distilled_{task}.pt")
+    distilled_path = Config.get_model_path(task, "standard_kd", "student_distilled.pt", dataset_size=size)
     if os.path.exists(distilled_path):
         distilled = get_student_model()
         distilled.load_state_dict(torch.load(distilled_path, map_location=device))
@@ -127,46 +127,48 @@ def load_all_models(task, device):
 
 def main():
     print("=" * 80)
-    print("  CENG 467 - Model Evaluation & Comparison")
-    print("  Knowledge Distillation for Task-Specific NLU")
+    print("  Model Evaluation & Comparison")
+    print("  Hierarchical Knowledge Distillation for Task-Specific NLU")
     print("=" * 80)
     
     device = Config.DEVICE
     print(f"\nUsing device: {device}")
     
-    task_dataloaders, _ = prepare_all_tasks()
-    
     all_results = {}
     
     for task in Config.TASKS:
-        print(f"\n{'='*60}")
-        print(f"  Task: {task.upper()}")
-        print(f"{'='*60}")
-        
-        models = load_all_models(task, device)
-        test_loader = task_dataloaders[task]['test']
-        
-        task_results = {}
-        
-        for model_name, model in models.items():
-            print(f"\nEvaluating {model_name}...")
-            metrics = evaluate_model(model, test_loader, device)
-            task_results[model_name] = metrics
+        for size in Config.get_task_sizes(task):
+            run_key = f"{task}_{size}"
+            print(f"\n{'='*60}")
+            print(f"  Task: {task.upper()}  |  Size: {size}")
+            print(f"{'='*60}")
             
-            print(f"  Accuracy:     {metrics['accuracy']:.4f}")
-            print(f"  Precision:    {metrics['precision']:.4f}")
-            print(f"  Recall:       {metrics['recall']:.4f}")
-            print(f"  F1 Score:     {metrics['f1']:.4f}")
-            print(f"  Parameters:   {metrics['num_parameters']/1e6:.1f}M")
-            print(f"  Model Size:   {metrics['model_size_mb']:.1f} MB")
-            print(f"  GPU Memory:   {metrics['gpu_memory_mb']:.1f} MB")
-            print(f"  Inference:    {metrics['avg_inference_time_ms']:.1f} ms/batch")
-        
-        all_results[task] = task_results
-        
-        for model in models.values():
-            del model
-        torch.cuda.empty_cache()
+            models = load_all_models(task, device, size)
+            subsample = Config.size_to_subsample(task, size)
+            task_dataloaders, _ = prepare_all_tasks([task], subsample)
+            test_loader = task_dataloaders[task]['test']
+            
+            task_results = {}
+            
+            for model_name, model in models.items():
+                print(f"\nEvaluating {model_name}...")
+                metrics = evaluate_model(model, test_loader, device)
+                task_results[model_name] = metrics
+                
+                print(f"  Accuracy:     {metrics['accuracy']:.4f}")
+                print(f"  Precision:    {metrics['precision']:.4f}")
+                print(f"  Recall:       {metrics['recall']:.4f}")
+                print(f"  F1 Score:     {metrics['f1']:.4f}")
+                print(f"  Parameters:   {metrics['num_parameters']/1e6:.1f}M")
+                print(f"  Model Size:   {metrics['model_size_mb']:.1f} MB")
+                print(f"  GPU Memory:   {metrics['gpu_memory_mb']:.1f} MB")
+                print(f"  Inference:    {metrics['avg_inference_time_ms']:.1f} ms/batch")
+            
+            all_results[run_key] = task_results
+            
+            for model in models.values():
+                del model
+            torch.cuda.empty_cache()
     
     # Print summary table
     print(f"\n{'='*100}")
@@ -175,20 +177,25 @@ def main():
     
     table = []
     for task in Config.TASKS:
-        for model_name, metrics in all_results[task].items():
-            table.append([
-                task.upper(),
-                model_name,
-                f"{metrics['accuracy']:.4f}",
-                f"{metrics['precision']:.4f}",
-                f"{metrics['recall']:.4f}",
-                f"{metrics['f1']:.4f}",
-                f"{metrics['num_parameters']/1e6:.1f}",
-                f"{metrics['model_size_mb']:.1f}",
-                f"{metrics['avg_inference_time_ms']:.1f}"
-            ])
+        for size in Config.get_task_sizes(task):
+            run_key = f"{task}_{size}"
+            if run_key not in all_results:
+                continue
+            for model_name, metrics in all_results[run_key].items():
+                table.append([
+                    task.upper(),
+                    str(size),
+                    model_name,
+                    f"{metrics['accuracy']:.4f}",
+                    f"{metrics['precision']:.4f}",
+                    f"{metrics['recall']:.4f}",
+                    f"{metrics['f1']:.4f}",
+                    f"{metrics['num_parameters']/1e6:.1f}",
+                    f"{metrics['model_size_mb']:.1f}",
+                    f"{metrics['avg_inference_time_ms']:.1f}"
+                ])
     
-    headers = ['Task', 'Model', 'Acc', 'Prec', 'Rec', 'F1', 
+    headers = ['Task', 'Size', 'Model', 'Acc', 'Prec', 'Rec', 'F1', 
                'Params(M)', 'Size(MB)', 'Time(ms)']
     print(tabulate(table, headers=headers, tablefmt="grid"))
     
@@ -197,15 +204,15 @@ def main():
     
     # Convert for JSON
     json_ready = {}
-    for task in Config.TASKS:
-        json_ready[task] = {}
-        for model_name, metrics in all_results[task].items():
-            json_ready[task][model_name] = {
+    for run_key, run_results in all_results.items():
+        json_ready[run_key] = {}
+        for model_name, metrics in run_results.items():
+            json_ready[run_key][model_name] = {
                 k: float(v) if isinstance(v, (np.floating, np.integer)) else v
                 for k, v in metrics.items()
                 if k != 'confusion_matrix'
             }
-            json_ready[task][model_name]['confusion_matrix'] = metrics['confusion_matrix']
+            json_ready[run_key][model_name]['confusion_matrix'] = metrics['confusion_matrix']
     
     with open(output_path, 'w') as f:
         json.dump(json_ready, f, indent=2)
