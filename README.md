@@ -1,6 +1,5 @@
-# Knowledge Distillation for Task-Specific NLU
-
-**CENG 467 Natural Language Understanding and Generation - Term Project**  
+# Revisiting Hierarchical Knowledge Distillation: Depth Dynamics Across Data Regimes
+  
 *Izmir Institute of Technology, Spring 2026*
 
 ---
@@ -60,15 +59,15 @@ The core research question: *When do intermediate "assistant" models between tea
 
 ### Prerequisites
 - Python 3.8+
-- CUDA-compatible GPU (8GB VRAM recommended)
+- CUDA-compatible GPU (6GB VRAM recommended)
 - Git
 
 ---
 
 ## Installation
 
-git clone https://github.com/sahende/CENG467_Final.git
-cd CENG467_Final
+git clone https://github.com/sahende/revisiting-hierarchical-distillation.git
+cd revisiting-hierarchical-distillation
 
 python -m venv venv
 source venv/bin/activate
@@ -123,11 +122,15 @@ Batch size: 16
 
 ## Citation
 
-@misc{simsek2026hkd,
+
+```bibtex
+@misc{simsek2026hkdDepth,
   title={Revisiting Hierarchical Knowledge Distillation: Depth Dynamics Across Data Regimes},
   author={Şimşek, Şahende},
-  year={2026}
+  year={2026},
+  howpublished={\url{https://github.com/sahende/revisiting-hierarchical-distillation}}
 }
+```
 
 ---
 
