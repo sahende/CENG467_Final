@@ -37,27 +37,22 @@ The core research question: *When do intermediate "assistant" models between tea
 
 ## Repository Structure
 
-src/
-├── config.py
-├── prepare_data.py
-├── train_baseline.py
-├── train_distill.py
-├── hierarchical_knowledge_distillation_all.py
-├── cka_svcca.py
-├── entropy_analysis.py
-├── evaluate.py
-└── plot.py
-
-results/
-models/
-├── teachers/
-├── all_dataset/
-├── cola/
-└── m2_models/
-
-requirements.txt
-references.bib
-README.md
+```text
+.
+├── src/
+│   ├── config.py
+│   ├── prepare_data.py
+│   ├── train_baseline.py
+│   ├── train_distill.py
+│   ├── hierarchical_knowledge_distillation_all.py
+│   ├── cka_svcca.py
+│   ├── entropy_analysis.py
+│   ├── evaluate.py
+│   └── plot.py
+├── .gitignore
+├── README.md
+└── requirements.txt
+```
 
 ---
 
