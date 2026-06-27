@@ -1,0 +1,85 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+venv/
+env/
+.venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Models (large binary files)
+models/
+*.pt
+*.pth
+*.bin
+*.safetensors
+
+# Results (JSON outputs)
+results/
+*.json
+
+# Datasets (cached)
+data/
+.cache/
+*.cache
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+
+# CUDA
+*.cubin
+*.cub
+
+# Hugging Face
+hf_*
+*.lock
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# wandb
+wandb/
+
+# Overleaf / LaTeX
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+
+# plots
+plots/*
