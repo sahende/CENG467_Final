@@ -236,15 +236,13 @@ def train_model(model, model_name, task_name, train_loader, val_loader, test_loa
 
 def main():
     """Main function to train baseline models."""
-    print("╔══════════════════════════════════════════════════════════╗")
-    print("║  CENG 467 - Baseline Model Training                    ║")
-    print("║  Knowledge Distillation for Task-Specific NLU          ║")
-    print("╚══════════════════════════════════════════════════════════╝\n")
+    print("╔════════════════════════════════════════════════════════════╗")
+    print("║  Baseline Model Training                                   ║")
+    print("║  Hierarchical Knowledge Distillation for Task-Specific NLU ║")
+    print("╚════════════════════════════════════════════════════════════╝\n")
     
     os.makedirs(Config.MODEL_SAVE_PATH, exist_ok=True)
     os.makedirs(Config.RESULTS_PATH, exist_ok=True)
-    
-    task_dataloaders, tokenizer = prepare_all_tasks()
     
     device = Config.DEVICE
     print(f"\nUsing device: {device}")
@@ -252,79 +250,93 @@ def main():
     all_results = {}
     
     for task in Config.TASKS:
-        task_results = {}
-        
-        train_loader = task_dataloaders[task]['train']
-        val_loader = task_dataloaders[task]['val']
-        test_loader = task_dataloaders[task]['test']
-        
-        # ============ TEACHER ============
-        print(f"\n{'#'*55}")
-        print(f"  BASELINE 1: Teacher Model (BERT-base) - {task.upper()}")
-        print(f"{'#'*55}")
-        
-        teacher = get_teacher_model(task)
-        teacher.to(device)
-        
-        teacher, teacher_results = train_model(
-            teacher, "BERT-base Teacher", task,
-            train_loader, val_loader, test_loader, device
-        )
-        
-        torch.save(
-            teacher.state_dict(),
-            os.path.join(Config.MODEL_SAVE_PATH, f"teacher_{task}.pt")
-        )
-        task_results['teacher'] = teacher_results
-        
-        # ============ STUDENT w/o DISTILLATION ============
-        print(f"\n{'#'*55}")
-        print(f"  BASELINE 2: Student Model (w/o Distillation) - {task.upper()}")
-        print(f"{'#'*55}")
-        
-        student_no_distill = get_student_model()
-        student_no_distill.to(device)
-        
-        student_no_distill, student_results = train_model(
-            student_no_distill, "Student w/o Distillation", task,
-            train_loader, val_loader, test_loader, device
-        )
-        
-        torch.save(
-            student_no_distill.state_dict(),
-            os.path.join(Config.MODEL_SAVE_PATH, f"student_no_distill_{task}.pt")
-        )
-        task_results['student_no_distill'] = student_results
-        
-        all_results[task] = task_results
-        
-        del teacher, student_no_distill
-        torch.cuda.empty_cache()
-    
+        for size in Config.get_task_sizes(task):
+            run_key = f"{task}_{size}"
+            print(f"\n{'#'*60}")
+            print(f"  TASK: {task.upper()}  |  DATASET SIZE: {size}")
+            print(f"{'#'*60}")
+
+            # Load data for this specific task + size combination
+            subsample = Config.size_to_subsample(task, size)
+            task_dataloaders, _ = prepare_all_tasks([task], subsample)
+
+            train_loader = task_dataloaders[task]['train']
+            val_loader   = task_dataloaders[task]['val']
+            test_loader  = task_dataloaders[task]['test']
+
+            task_results = {}
+
+            # ============ TEACHER ============
+            print(f"\n{'#'*55}")
+            print(f"  BASELINE 1: Teacher Model (BERT-base) - {task.upper()}")
+            print(f"{'#'*55}")
+
+            teacher = get_teacher_model(task)
+            teacher.to(device)
+
+            teacher, teacher_results = train_model(
+                teacher, "BERT-base Teacher", task,
+                train_loader, val_loader, test_loader, device
+            )
+
+            torch.save(
+                teacher.state_dict(),
+                Config.get_model_path(task, "baselines", "teacher.pt", dataset_size=size)
+            )
+            task_results['teacher'] = teacher_results
+
+            # ============ STUDENT w/o DISTILLATION ============
+            print(f"\n{'#'*55}")
+            print(f"  BASELINE 2: Student Model (w/o Distillation) - {task.upper()}")
+            print(f"{'#'*55}")
+
+            student_no_distill = get_student_model()
+            student_no_distill.to(device)
+
+            student_no_distill, student_results = train_model(
+                student_no_distill, "Student w/o Distillation", task,
+                train_loader, val_loader, test_loader, device
+            )
+
+            torch.save(
+                student_no_distill.state_dict(),
+                Config.get_model_path(task, "baselines", "student_no_distill.pt", dataset_size=size)
+            )
+            task_results['student_no_distill'] = student_results
+
+            all_results[run_key] = task_results
+
+            del teacher, student_no_distill
+            torch.cuda.empty_cache()
+
     # Save results
     results_file = os.path.join(Config.RESULTS_PATH, "baseline_results.json")
     with open(results_file, 'w') as f:
         json.dump(all_results, f, indent=2)
-    
+
     # Print final summary table
-    print(f"\n{'='*80}")
+    print(f"\n{'='*88}")
     print("  FINAL RESULTS SUMMARY")
-    print(f"{'='*80}")
-    print(f"{'Task':<6} {'Model':<28} {'Acc':<8} {'Prec':<8} {'Rec':<8} {'F1':<8} {'Params':<10} {'Time(ms)':<10}")
-    print(f"{'-'*80}")
-    
+    print(f"{'='*88}")
+    print(f"{'Task':<6} {'Size':<8} {'Model':<28} {'Acc':<8} {'Prec':<8} {'Rec':<8} {'F1':<8} {'Params':<10} {'Time(ms)':<10}")
+    print(f"{'-'*88}")
+
     for task in Config.TASKS:
-        t = all_results[task]['teacher']['test']
-        s = all_results[task]['student_no_distill']['test']
-        
-        print(f"{task.upper():<6} {'Teacher (BERT-base)':<28} "
-              f"{t['accuracy']:.4f}   {t['precision_macro']:.4f}   {t['recall_macro']:.4f}   "
-              f"{t['f1_macro']:.4f}   {t['num_parameters']/1e6:.1f}M      {t['avg_inference_time_ms']:.1f}")
-        print(f"{'':<6} {'Student (w/o Distillation)':<28} "
-              f"{s['accuracy']:.4f}   {s['precision_macro']:.4f}   {s['recall_macro']:.4f}   "
-              f"{s['f1_macro']:.4f}   {s['num_parameters']/1e6:.1f}M      {s['avg_inference_time_ms']:.1f}")
-        print(f"{'-'*80}")
-    
+        for size in Config.get_task_sizes(task):
+            run_key = f"{task}_{size}"
+            if run_key not in all_results:
+                continue
+            t = all_results[run_key]['teacher']['test']
+            s = all_results[run_key]['student_no_distill']['test']
+
+            print(f"{task.upper():<6} {str(size):<8} {'Teacher (BERT-base)':<28} "
+                  f"{t['accuracy']:.4f}   {t['precision_macro']:.4f}   {t['recall_macro']:.4f}   "
+                  f"{t['f1_macro']:.4f}   {t['num_parameters']/1e6:.1f}M      {t['avg_inference_time_ms']:.1f}")
+            print(f"{'': <6} {'': <8} {'Student (w/o Distillation)':<28} "
+                  f"{s['accuracy']:.4f}   {s['precision_macro']:.4f}   {s['recall_macro']:.4f}   "
+                  f"{s['f1_macro']:.4f}   {s['num_parameters']/1e6:.1f}M      {s['avg_inference_time_ms']:.1f}")
+            print(f"{'-'*88}")
+
     print(f"\nResults saved to: {results_file}")
     print(f"Models saved to: {Config.MODEL_SAVE_PATH}")
 

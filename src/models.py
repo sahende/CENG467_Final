@@ -1,6 +1,6 @@
 """
-CENG 467 - Model Definitions
-Knowledge Distillation for Task-Specific NLU
+Model Definitions
+Hierarchical Knowledge Distillation for Task-Specific NLU
 """
 
 import torch

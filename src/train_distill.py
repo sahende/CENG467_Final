@@ -1,5 +1,5 @@
 """
-CENG 467 - Knowledge Distillation Training
+Hierarchical Knowledge Distillation Training
 Trains the student model using knowledge distillation from the teacher.
 """
 
@@ -270,74 +270,82 @@ def train_distilled_model(teacher, student, task_name, train_loader,
 def main():
     """Main function for knowledge distillation training."""
     print("╔══════════════════════════════════════════════════════════╗")
-    print("║  CENG 467 - Knowledge Distillation Training             ║")
+    print("║  Knowledge Distillation Training                         ║")
     print("╚══════════════════════════════════════════════════════════╝\n")
-    
+
     os.makedirs(Config.MODEL_SAVE_PATH, exist_ok=True)
     os.makedirs(Config.RESULTS_PATH, exist_ok=True)
-    
-    task_dataloaders, tokenizer = prepare_all_tasks()
-    
+
     device = Config.DEVICE
     print(f"\nUsing device: {device}")
-    
+
     all_results = {}
-    
+
     for task in Config.TASKS:
-        print(f"\n{'#'*55}")
-        print(f"  Knowledge Distillation - {task.upper()}")
-        print(f"{'#'*55}")
-        
-        teacher_path = os.path.join(Config.MODEL_SAVE_PATH, f"teacher_{task}.pt")
-        
-        if os.path.exists(teacher_path):
-            print(f"Loading saved teacher model...")
-            teacher = get_teacher_model(task)
-            teacher.load_state_dict(torch.load(teacher_path, map_location=device))
-        else:
-            print("No saved teacher found! Run train_baseline.py first.")
-            continue
-        
-        student = get_student_model()
-        
-        train_loader = task_dataloaders[task]['train']
-        val_loader = task_dataloaders[task]['val']
-        test_loader = task_dataloaders[task]['test']
-        
-        distilled_student, results = train_distilled_model(
-            teacher, student, task,
-            train_loader, val_loader, test_loader, device
-        )
-        
-        torch.save(
-            distilled_student.state_dict(),
-            os.path.join(Config.MODEL_SAVE_PATH, f"student_distilled_{task}.pt")
-        )
-        
-        all_results[task] = results
-        
-        del teacher, student, distilled_student
-        torch.cuda.empty_cache()
-    
+        for size in Config.get_task_sizes(task):
+            run_key = f"{task}_{size}"
+            print(f"\n{'#'*60}")
+            print(f"  Knowledge Distillation - {task.upper()}  |  SIZE: {size}")
+            print(f"{'#'*60}")
+
+            teacher_path = Config.get_model_path(task, "baselines", "teacher.pt", dataset_size=size)
+
+            if os.path.exists(teacher_path):
+                print(f"Loading saved teacher model...")
+                teacher = get_teacher_model(task)
+                teacher.load_state_dict(torch.load(teacher_path, map_location=device))
+            else:
+                print(f"No saved teacher found at {teacher_path}! Run train_baseline.py first.")
+                continue
+
+            # Load data for this specific task + size combination
+            subsample = Config.size_to_subsample(task, size)
+            task_dataloaders, _ = prepare_all_tasks([task], subsample)
+
+            student = get_student_model()
+
+            train_loader = task_dataloaders[task]['train']
+            val_loader   = task_dataloaders[task]['val']
+            test_loader  = task_dataloaders[task]['test']
+
+            distilled_student, results = train_distilled_model(
+                teacher, student, task,
+                train_loader, val_loader, test_loader, device
+            )
+
+            torch.save(
+                distilled_student.state_dict(),
+                Config.get_model_path(task, "standard_kd", "student_distilled.pt", dataset_size=size)
+            )
+
+            all_results[run_key] = results
+
+            del teacher, student, distilled_student
+            torch.cuda.empty_cache()
+
     results_file = os.path.join(Config.RESULTS_PATH, "distillation_results.json")
     with open(results_file, 'w') as f:
         json.dump(all_results, f, indent=2)
-    
+
     print(f"\n{'='*80}")
     print("  DISTILLATION RESULTS SUMMARY")
     print(f"{'='*80}")
-    
+
     for task in Config.TASKS:
-        t = all_results[task]['test']
-        print(f"\n{task.upper()}:")
-        print(f"  Accuracy:  {t['accuracy']:.4f}")
-        print(f"  Precision: {t['precision_macro']:.4f}")
-        print(f"  Recall:    {t['recall_macro']:.4f}")
-        print(f"  F1 Score:  {t['f1_macro']:.4f}")
-        print(f"  Best Epoch: {t['best_epoch']}")
-        print(f"  Parameters: {t['num_parameters']/1e6:.1f}M")
-        print(f"  Avg Inference: {t['avg_inference_time_ms']:.1f} ms/batch")
-    
+        for size in Config.get_task_sizes(task):
+            run_key = f"{task}_{size}"
+            if run_key not in all_results:
+                continue
+            t = all_results[run_key]['test']
+            print(f"\n{task.upper()} [{size}]:")
+            print(f"  Accuracy:  {t['accuracy']:.4f}")
+            print(f"  Precision: {t['precision_macro']:.4f}")
+            print(f"  Recall:    {t['recall_macro']:.4f}")
+            print(f"  F1 Score:  {t['f1_macro']:.4f}")
+            print(f"  Best Epoch: {t['best_epoch']}")
+            print(f"  Parameters: {t['num_parameters']/1e6:.1f}M")
+            print(f"  Avg Inference: {t['avg_inference_time_ms']:.1f} ms/batch")
+
     print(f"\nResults saved to: {results_file}")
 
 if __name__ == "__main__":
