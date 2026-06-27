@@ -12,7 +12,7 @@ METRICS:
    Paired t-test + Paired Cohen's d
    Effect size with 0.2/0.5/0.8 thresholds
    Quadratic regression fit (R², optimal depth)
-   JSON serialization FIXED
+   JSON serialization
    All efficiency metrics preserved
    Assistant & Student model saving
    Checkpoint resume (skip completed seeds)
@@ -351,209 +351,209 @@ def main():
     device = Config.DEVICE
     os.makedirs(Config.MODEL_SAVE_PATH, exist_ok=True)
     os.makedirs(Config.RESULTS_PATH, exist_ok=True)
-    
-    # Create subdirectories for models
-    models_path = os.path.join(Config.MODEL_SAVE_PATH, "m2_models")
-    os.makedirs(models_path, exist_ok=True)
 
     print("\n" + "=" * 70)
     print("  M2 - HIERARCHICAL KD (FINAL: 6 Depths × 5 Seeds + Checkpoint Resume)")
     print("=" * 70)
 
-    task_subsample_sizes = {}
-    target_data, _ = prepare_all_tasks(Config.TARGET_TASKS, task_subsample_sizes)
     all_results = {}
 
     for task in Config.TARGET_TASKS:
-        print(f"\n{'#'*60}")
-        print(f"  TASK: {task.upper()}")
-        print(f"{'#'*60}")
+        for size in Config.get_task_sizes(task):
+            run_key = f"{task}_{size}"
+            print(f"\n{'#'*60}")
+            print(f"  TASK: {task.upper()}  |  SIZE: {size}")
+            print(f"{'#'*60}")
 
-        train_loader = target_data[task]['train']
-        val_loader = target_data[task]['val']
-        test_loader = target_data[task]['test']
+            # Load data for this specific task + size combination
+            subsample = Config.size_to_subsample(task, size)
+            target_data, _ = prepare_all_tasks([task], subsample)
 
-        # TEACHER CEILING
-        teacher_path = os.path.join(Config.MODEL_SAVE_PATH, f"teacher_{task}.pt")
-        teacher = get_teacher_model(task, num_labels=2)
-        if os.path.exists(teacher_path):
-            teacher.load_state_dict(torch.load(teacher_path, map_location=device))
-            print(f"  ✓ Loaded teacher from {teacher_path}")
-        else:
-            print(f"  ✗ Teacher not found at {teacher_path}")
-            continue
+            train_loader = target_data[task]['train']
+            val_loader   = target_data[task]['val']
+            test_loader  = target_data[task]['test']
+
+            # TEACHER CEILING
+            teacher_path = Config.get_model_path(task, "baselines", "teacher.pt", dataset_size=size)
+            teacher = get_teacher_model(task, num_labels=2)
+            if os.path.exists(teacher_path):
+                teacher.load_state_dict(torch.load(teacher_path, map_location=device))
+                print(f"  ✓ Loaded teacher from {teacher_path}")
+            else:
+                print(f"  ✗ Teacher not found at {teacher_path}")
+                continue
+                
+            teacher.to(device).eval()
+            for p in teacher.parameters(): p.requires_grad = False
             
-        teacher.to(device).eval()
-        for p in teacher.parameters(): p.requires_grad = False
-        
-        _, teacher_test = evaluate(teacher, test_loader, device)
-        teacher_f1 = teacher_test['f1_macro']
-        print(f"  ✓ Teacher Ceiling: F1={teacher_f1:.4f}")
+            _, teacher_test = evaluate(teacher, test_loader, device)
+            teacher_f1 = teacher_test['f1_macro']
+            print(f"  ✓ Teacher Ceiling: F1={teacher_f1:.4f}")
 
-        # FAIR INIT
-        torch.manual_seed(Config.SEED)
-        base_student_init = get_student_model(num_labels=2).state_dict()
-        assistant_inits = {}
-        for depth in ALL_DEPTHS:
+            # FAIR INIT
             torch.manual_seed(Config.SEED)
-            assistant_inits[depth] = get_assistant_model(num_labels=2, num_layers=depth).state_dict()
+            base_student_init = get_student_model(num_labels=2).state_dict()
+            assistant_inits = {}
+            for depth in ALL_DEPTHS:
+                torch.manual_seed(Config.SEED)
+                assistant_inits[depth] = get_assistant_model(num_labels=2, num_layers=depth).state_dict()
 
-        task_results = {
-            'teacher_ceiling': {'f1': teacher_f1},
-            'direct_kd': {},
-            'depth_ablation': {}
-        }
+            task_results = {
+                'teacher_ceiling': {'f1': teacher_f1},
+                'direct_kd': {},
+                'depth_ablation': {}
+            }
 
-        # ================================================================
-        # DIRECT KD
-        # ================================================================
-        print(f"\n  --- DIRECT KD: Teacher (12L) → Student (6L) [5 Seeds] ---")
-        direct_seeds = []
-        for seed in SEEDS:
-            torch.manual_seed(seed); np.random.seed(seed); torch.cuda.manual_seed_all(seed)
-            torch.cuda.empty_cache()
-            student_direct = get_student_model(num_labels=2)
-            student_direct.load_state_dict(copy.deepcopy(base_student_init))
-            
-            direct_save_path = os.path.join(models_path, f"{task}_direct_kd_seed{seed}.pt")
-            
-            student_direct, dr = train_kd_loop(
-                teacher, student_direct, train_loader, val_loader, test_loader,
-                device, Config.ADAPT_EPOCHS, lr_mult=1.0, mode=f"Direct KD (s={seed})",
-                save_path=direct_save_path, force_retrain=False)
-            direct_seeds.append(dr)
-            del student_direct; torch.cuda.empty_cache()
-
-        direct_f1s = [r['test']['f1_macro'] for r in direct_seeds]
-        direct_ci = compute_95ci(direct_f1s)
-        direct_times = [r['training_time_sec'] for r in direct_seeds]
-        
-        task_results['direct_kd'] = {
-            'f1_ci': direct_ci,
-            'f1_std': round(np.std(direct_f1s), 4),
-            'training_time_min_mean': round(np.mean(direct_times) / 60, 2)
-        }
-        print(f"  ✓ Direct KD: F1={direct_ci['mean']:.4f} [95%CI: {direct_ci['lower']:.4f}-{direct_ci['upper']:.4f}]")
-
-        # ================================================================
-        # DEPTH ABLATION
-        # ================================================================
-        for depth in ALL_DEPTHS:
-            print(f"\n  --- HKD ({depth}L): Assistant ({depth}L) → Student (6L) [5 Seeds] ---")
-            depth_seeds = []
-            
+            # ================================================================
+            # DIRECT KD
+            # ================================================================
+            print(f"\n  --- DIRECT KD: Teacher (12L) → Student (6L) [5 Seeds] ---")
+            direct_seeds = []
             for seed in SEEDS:
                 torch.manual_seed(seed); np.random.seed(seed); torch.cuda.manual_seed_all(seed)
                 torch.cuda.empty_cache()
+                student_direct = get_student_model(num_labels=2)
+                student_direct.load_state_dict(copy.deepcopy(base_student_init))
                 
-                # === STAGE 1: Teacher → Assistant ===
-                assistant_save_path = os.path.join(models_path, f"{task}_depth{depth}L_assistant_seed{seed}.pt")
-                
-                assistant = get_assistant_model(num_labels=2, num_layers=depth)
-                assistant.load_state_dict(copy.deepcopy(assistant_inits[depth]))
-                
-                assistant, s1 = train_kd_loop(
-                    teacher, assistant, train_loader, val_loader, test_loader,
-                    device, Config.ADAPT_EPOCHS, lr_mult=1.0, mode=f"Stage1 {depth}L (s={seed})",
-                    save_path=assistant_save_path, force_retrain=False)
-                
-                # === STAGE 2: Assistant → Student ===
-                student_save_path = os.path.join(models_path, f"{task}_depth{depth}L_student_seed{seed}.pt")
-                
-                student_hkd = get_student_model(num_labels=2)
-                student_hkd.load_state_dict(copy.deepcopy(base_student_init))
-                
-                student_hkd, s2 = train_kd_loop(
-                    assistant, student_hkd, train_loader, val_loader, test_loader,
-                    device, Config.ADAPT_EPOCHS, lr_mult=0.5, mode=f"Stage2 {depth}L→6L (s={seed})",
-                    save_path=student_save_path, force_retrain=False)
-                
-                depth_seeds.append({'stage1': s1, 'stage2': s2, 'seed': seed})
-                
-                s1_loaded = s1.get('loaded_from_checkpoint', False)
-                s2_loaded = s2.get('loaded_from_checkpoint', False)
-                if s1_loaded or s2_loaded:
-                    print(f"    ⚡ Seed {seed}: Stage1={'loaded' if s1_loaded else 'trained'}, "
-                          f"Stage2={'loaded' if s2_loaded else 'trained'}")
-                
-                del assistant, student_hkd; torch.cuda.empty_cache()
+                direct_save_path = Config.get_model_path(task, "hierarchical_kd", "direct_kd.pt", seed=seed, dataset_size=size)
+            
+                student_direct, dr = train_kd_loop(
+                    teacher, student_direct, train_loader, val_loader, test_loader,
+                    device, Config.ADAPT_EPOCHS, lr_mult=1.0, mode=f"Direct KD (s={seed})",
+                    save_path=direct_save_path, force_retrain=False)
+                direct_seeds.append(dr)
+                del student_direct; torch.cuda.empty_cache()
 
-            # Aggregate: sadece başarıyla tamamlanmış seed'leri kullan
-            valid_seeds = [s for s in depth_seeds if s['stage2']['test'] is not None]
+            direct_f1s = [r['test']['f1_macro'] for r in direct_seeds]
+            direct_ci = compute_95ci(direct_f1s)
+            direct_times = [r['training_time_sec'] for r in direct_seeds]
             
-            if len(valid_seeds) < 2:
-                print(f"    ⚠ Only {len(valid_seeds)} valid seeds for depth {depth}L, using all available")
-                if len(valid_seeds) == 0:
-                    continue
-            
-            s2_f1s = [s['stage2']['test']['f1_macro'] for s in valid_seeds]
-            s2_ci = compute_95ci(s2_f1s)
-            
-            # Eşleşen Direct KD seed'leri
-            matching_direct_f1s = []
-            for s in valid_seeds:
-                seed_idx = SEEDS.index(s['seed']) if s['seed'] in SEEDS else -1
-                if seed_idx >= 0 and seed_idx < len(direct_f1s):
-                    matching_direct_f1s.append(direct_f1s[seed_idx])
-            
-            if len(matching_direct_f1s) >= 2 and len(s2_f1s) >= 2 and len(matching_direct_f1s) == len(s2_f1s):
-                _, p_val = ttest_rel(s2_f1s, matching_direct_f1s)
-                d_val = cohens_d_paired(s2_f1s, matching_direct_f1s)
-            else:
-                p_val = float('nan')
-                d_val = float('nan')
-            
-            gain = round(s2_ci['mean'] - direct_ci['mean'], 4)
-            s2_times = [s['stage1']['training_time_sec'] + s['stage2']['training_time_sec'] for s in valid_seeds]
-            overhead = round(np.mean(s2_times) / np.mean(direct_times), 2) if np.mean(direct_times) > 0 else float('inf')
-
-            task_results['depth_ablation'][str(depth)] = {
-                'f1_ci': s2_ci,
-                'f1_std': round(np.std(s2_f1s), 4),
-                'gain_vs_direct': gain,
-                'p_value': round(p_val, 4) if not np.isnan(p_val) else None,
-                'cohens_d_paired': round(d_val, 4) if not np.isnan(d_val) else None,
-                'effect_size': interpret_effect_size(d_val) if not np.isnan(d_val) else 'N/A',
-                'compute_overhead': overhead,
-                'num_valid_seeds': len(valid_seeds),
-                'num_total_seeds': len(SEEDS)
+            task_results['direct_kd'] = {
+                'f1_ci': direct_ci,
+                'f1_std': round(np.std(direct_f1s), 4),
+                'training_time_min_mean': round(np.mean(direct_times) / 60, 2)
             }
+            print(f"  ✓ Direct KD: F1={direct_ci['mean']:.4f} [95%CI: {direct_ci['lower']:.4f}-{direct_ci['upper']:.4f}]")
 
-            print(f"  ✓ {depth}L: F1={s2_ci['mean']:.4f} [95%CI: {s2_ci['lower']:.4f}-{s2_ci['upper']:.4f}], "
-                  f"Δ={gain:+.4f}, p={p_val:.4f}, d={d_val:.4f}, seeds={len(valid_seeds)}/{len(SEEDS)}")
+            # ================================================================
+            # DEPTH ABLATION
+            # ================================================================
+            for depth in ALL_DEPTHS:
+                print(f"\n  --- HKD ({depth}L): Assistant ({depth}L) → Student (6L) [5 Seeds] ---")
+                depth_seeds = []
+                
+                for seed in SEEDS:
+                    torch.manual_seed(seed); np.random.seed(seed); torch.cuda.manual_seed_all(seed)
+                    torch.cuda.empty_cache()
+                    
+                    # === STAGE 1: Teacher → Assistant ===
+                    assistant_save_path = Config.get_model_path(task, "hierarchical_kd", f"assistant_depth{depth}L.pt", seed=seed, dataset_size=size)
+                    
+                    assistant = get_assistant_model(num_labels=2, num_layers=depth)
+                    assistant.load_state_dict(copy.deepcopy(assistant_inits[depth]))
+                    
+                    assistant, s1 = train_kd_loop(
+                        teacher, assistant, train_loader, val_loader, test_loader,
+                        device, Config.ADAPT_EPOCHS, lr_mult=1.0, mode=f"Stage1 {depth}L (s={seed})",
+                        save_path=assistant_save_path, force_retrain=False)
+                    
+                    # === STAGE 2: Assistant → Student ===
+                    student_save_path = Config.get_model_path(task, "hierarchical_kd", f"student_hkd_depth{depth}L.pt", seed=seed, dataset_size=size)
+                    
+                    student_hkd = get_student_model(num_labels=2)
+                    student_hkd.load_state_dict(copy.deepcopy(base_student_init))
+                    
+                    student_hkd, s2 = train_kd_loop(
+                        assistant, student_hkd, train_loader, val_loader, test_loader,
+                        device, Config.ADAPT_EPOCHS, lr_mult=0.5, mode=f"Stage2 {depth}L→6L (s={seed})",
+                        save_path=student_save_path, force_retrain=False)
+                    
+                    depth_seeds.append({'stage1': s1, 'stage2': s2, 'seed': seed})
+                    
+                    s1_loaded = s1.get('loaded_from_checkpoint', False)
+                    s2_loaded = s2.get('loaded_from_checkpoint', False)
+                    if s1_loaded or s2_loaded:
+                        print(f"    ⚡ Seed {seed}: Stage1={'loaded' if s1_loaded else 'trained'}, "
+                              f"Stage2={'loaded' if s2_loaded else 'trained'}")
+                    
+                    del assistant, student_hkd; torch.cuda.empty_cache()
 
-        # ================================================================
-        # QUADRATIC FIT (sadece en az 3 depth varsa)
-        # ================================================================
-        valid_depths = []
-        valid_f1s = []
-        for d in ALL_DEPTHS:
-            if str(d) in task_results['depth_ablation']:
-                valid_depths.append(d)
-                valid_f1s.append(task_results['depth_ablation'][str(d)]['f1_ci']['mean'])
-        
-        if len(valid_depths) >= 3:
-            quad_fit = fit_quadratic(valid_depths, valid_f1s)
-            task_results['quadratic_fit'] = quad_fit
+                # Aggregate
+                valid_seeds = [s for s in depth_seeds if s['stage2']['test'] is not None]
+                
+                if len(valid_seeds) < 2:
+                    print(f"    ⚠ Only {len(valid_seeds)} valid seeds for depth {depth}L, using all available")
+                    if len(valid_seeds) == 0:
+                        continue
+                
+                s2_f1s = [s['stage2']['test']['f1_macro'] for s in valid_seeds]
+                s2_ci = compute_95ci(s2_f1s)
+                
+                # Eşleşen Direct KD seed'leri
+                matching_direct_f1s = []
+                for s in valid_seeds:
+                    seed_idx = SEEDS.index(s['seed']) if s['seed'] in SEEDS else -1
+                    if seed_idx >= 0 and seed_idx < len(direct_f1s):
+                        matching_direct_f1s.append(direct_f1s[seed_idx])
+                
+                if len(matching_direct_f1s) >= 2 and len(s2_f1s) >= 2 and len(matching_direct_f1s) == len(s2_f1s):
+                    _, p_val = ttest_rel(s2_f1s, matching_direct_f1s)
+                    d_val = cohens_d_paired(s2_f1s, matching_direct_f1s)
+                else:
+                    p_val = float('nan')
+                    d_val = float('nan')
+                
+                gain = round(s2_ci['mean'] - direct_ci['mean'], 4)
+                s2_times = [s['stage1']['training_time_sec'] + s['stage2']['training_time_sec'] for s in valid_seeds]
+                overhead = round(np.mean(s2_times) / np.mean(direct_times), 2) if np.mean(direct_times) > 0 else float('inf')
+
+                task_results['depth_ablation'][str(depth)] = {
+                    'f1_ci': s2_ci,
+                    'f1_std': round(np.std(s2_f1s), 4),
+                    'gain_vs_direct': gain,
+                    'p_value': round(p_val, 4) if not np.isnan(p_val) else None,
+                    'cohens_d_paired': round(d_val, 4) if not np.isnan(d_val) else None,
+                    'effect_size': interpret_effect_size(d_val) if not np.isnan(d_val) else 'N/A',
+                    'compute_overhead': overhead,
+                    'num_valid_seeds': len(valid_seeds),
+                    'num_total_seeds': len(SEEDS)
+                }
+
+                print(f"  ✓ {depth}L: F1={s2_ci['mean']:.4f} [95%CI: {s2_ci['lower']:.4f}-{s2_ci['upper']:.4f}], "
+                      f"Δ={gain:+.4f}, p={p_val:.4f}, d={d_val:.4f}, seeds={len(valid_seeds)}/{len(SEEDS)}")
+
+            # ================================================================
+            # QUADRATIC FIT
+            # ================================================================
+            valid_depths = []
+            valid_f1s = []
+            for d in ALL_DEPTHS:
+                if str(d) in task_results['depth_ablation']:
+                    valid_depths.append(d)
+                    valid_f1s.append(task_results['depth_ablation'][str(d)]['f1_ci']['mean'])
             
-            print(f"\n  --- Quadratic Fit ---")
-            print(f"  Equation: {quad_fit['equation']}")
-            print(f"  R² = {quad_fit['r_squared']:.4f}")
-            print(f"  Optimal depth = {quad_fit['optimal_depth']:.2f}L")
-        else:
-            task_results['quadratic_fit'] = None
-            print(f"\n  --- Quadratic Fit: SKIPPED (need ≥3 depths, have {len(valid_depths)}) ---")
+            if len(valid_depths) >= 3:
+                quad_fit = fit_quadratic(valid_depths, valid_f1s)
+                task_results['quadratic_fit'] = quad_fit
+                print(f"\n  --- Quadratic Fit ---")
+                print(f"  Equation: {quad_fit['equation']}")
+                print(f"  R² = {quad_fit['r_squared']:.4f}")
+                print(f"  Optimal depth = {quad_fit['optimal_depth']:.2f}L")
+            else:
+                task_results['quadratic_fit'] = None
+                print(f"\n  --- Quadratic Fit: SKIPPED (need ≥3 depths, have {len(valid_depths)}) ---")
 
-        all_results[task] = task_results
+            all_results[run_key] = task_results
+
+            del teacher; torch.cuda.empty_cache()
 
     # ================================================================
-    # SAVE (FIXED)
+    # SAVE RESULTS
     # ================================================================
     all_results = make_serializable(all_results)
     with open(os.path.join(Config.RESULTS_PATH, "m2_final_results.json"), 'w') as f:
         json.dump(all_results, f, indent=2)
     print(f"\n✓ Results saved to {os.path.join(Config.RESULTS_PATH, 'm2_final_results.json')}")
-    print(f"✓ Models saved to {models_path}")
 
     # ================================================================
     # FINAL SUMMARY
@@ -563,7 +563,11 @@ def main():
     print(f"{'='*120}")
     
     for task in Config.TARGET_TASKS:
-        r = all_results[task]
+        for size in Config.get_task_sizes(task):
+            run_key = f"{task}_{size}"
+            if run_key not in all_results:
+                continue
+            r = all_results[run_key]
         direct = r['direct_kd']['f1_ci']
         qf = r.get('quadratic_fit')
         
