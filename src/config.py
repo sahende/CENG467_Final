@@ -1,8 +1,10 @@
 """
-CENG 467 - Knowledge Distillation for Task-Specific NLU
-Configuration file - Domain Adaptation Experiments
+Hierarchical Knowledge Distillation for Task-Specific NLU
 """
 
+import os
+
+from numpy import size
 import torch
 
 class Config:
@@ -21,7 +23,6 @@ class Config:
     MAX_SEQ_LENGTH = 128
     
     # Domain Adaptation settings
-    GENERAL_EPOCHS = 10
     ADAPT_EPOCHS = 10
     
     # Early stopping
@@ -37,10 +38,14 @@ class Config:
     ALPHA = 0.5
     
     # Data settings
-    TASKS = [ "rte","mrpc","cola","sst2" ]
-    TARGET_TASKS = [ "mrpc","rte"]
-    GENERAL_TASKS = ["cola","sst2"]
+    TASKS = ["cola" ]
+    TARGET_TASKS = [ "cola"]
     VAL_SPLIT = 0.2
+    
+    # Data subsampling settings
+    # Specify the dataset sizes to subsample for each task. If empty/not specified, uses full dataset.
+    DATASET_SIZES = {"cola":2490}
+    
     
     # Paths
     MODEL_SAVE_PATH = "./models"
@@ -51,3 +56,47 @@ class Config:
     
     # Reproducibility
     SEED = 42
+
+    @classmethod
+    def get_model_path(cls, task, category, filename, seed=None, dataset_size=None):
+        """
+        Builds the standard path:
+        models/{base_model}/{task}/{dataset_size}/seed_{seed}/{category}/{filename}
+        """
+        base_model = cls.TEACHER_MODEL.split("-")[0]
+        if dataset_size is None:
+            dataset_size = str(cls.DATASET_SIZES.get(task, "full"))
+        else:
+            dataset_size = str(dataset_size)
+        seed_str = str(seed) if seed is not None else str(cls.SEED)
+        
+        path = os.path.join(
+            cls.MODEL_SAVE_PATH, 
+            base_model,
+            task,
+            dataset_size,
+            f"seed_{seed_str}",
+            category
+        )
+        os.makedirs(path, exist_ok=True)
+        return os.path.join(path, filename)
+    
+    @classmethod
+    def get_task_sizes(cls, task):
+        """
+        Returns the list of dataset sizes for a given task.
+        If no sizes are specified in DATASET_SIZES, returns a list with a single 'full' string.
+        """
+        if task in cls.DATASET_SIZES:
+            return cls.DATASET_SIZES[task] if isinstance(cls.DATASET_SIZES[task], list) else [cls.DATASET_SIZES[task]]
+        return ["full"]
+    
+    @classmethod
+    def size_to_subsample(cls, task, size):
+        """
+        Converts a size value to a task_subsample_sizes dict for prepare_data.
+        'full' -> {} (no subsampling)
+        """
+        if size == "full":
+            return {}
+        return {task: size if isinstance(size, int) else int(size)}

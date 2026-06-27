@@ -1,8 +1,7 @@
 """
-CENG 467 - Data Preparation for GLUE Tasks
-Knowledge Distillation with Domain Adaptation
+Data Preparation for GLUE Tasks
+Hierarchical Knowledge Distillation with Domain Adaptation
 
-FIX: Bypass HuggingFace cache for subsampling by reloading fresh each time
 """
 
 import torch
@@ -26,7 +25,7 @@ def prepare_single_task(task_name, tokenizer, max_train_samples=None):
     print(f"  Loading {task_name.upper()}...")
     
     # ================================================================
-    # FIX: Fresh load every time (no cache interference)
+    # Fresh load every time (no cache interference)
     # ================================================================
     import datasets
     datasets.disable_caching()
@@ -111,7 +110,7 @@ def prepare_all_tasks(task_list=None, task_subsample_sizes=None):
         task_list = Config.TASKS
     
     if task_subsample_sizes is None:
-        task_subsample_sizes = {}
+        task_subsample_sizes = Config.DATASET_SIZES
     
     tokenizer = AutoTokenizer.from_pretrained(Config.TEACHER_MODEL)
     print(f"Preparing tasks: {task_list}")
@@ -129,7 +128,7 @@ def prepare_all_tasks(task_list=None, task_subsample_sizes=None):
 def prepare_combined_tasks(task_list, task_subsample_sizes=None):
     """Combine multiple tasks into one DataLoader."""
     if task_subsample_sizes is None:
-        task_subsample_sizes = {}
+        task_subsample_sizes = Config.DATASET_SIZES
     
     tokenizer = AutoTokenizer.from_pretrained(Config.TEACHER_MODEL)
     print(f"Preparing COMBINED tasks: {task_list}")
@@ -164,9 +163,6 @@ if __name__ == "__main__":
     
     task_dataloaders, _ = prepare_all_tasks(
         task_list=["rte", "mrpc", "cola", "sst2"],
-        task_subsample_sizes={
-            "cola": 3668,
-            "sst2": 5000,
-        }
+        task_subsample_sizes=Config.DATASET_SIZES
     )
     print("\n✓ Data preparation complete!")
